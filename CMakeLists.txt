@@ -21,7 +21,17 @@ if(OGC_BACKEND STREQUAL "libusb")
   target_link_libraries(ogc-terminal ogckit)
 endif()
 
+if(OGC_BACKEND STREQUAL "ps4")
+  # orbis/Usbd.h includes <libusb.h>, kept in include/orbis/_types, which also has a pthread.h,
+  # so it must come after the system headers (-idirafter). OPENORBIS is set by the PacBrew toolchain.
+  set_source_files_properties(src/backend_ps4.cpp PROPERTIES
+      COMPILE_OPTIONS "-idirafter;${OPENORBIS}/include/orbis/_types")
+  target_link_libraries(ogckit PUBLIC SceSysmodule SceUsbd pthread)
+endif()
+
 enable_testing()
+if(NOT OGC_BACKEND STREQUAL "ps4")
 add_executable(test_xinput tests/test_xinput.cpp)
 target_link_libraries(test_xinput ogckit)
 add_test(NAME xinput COMMAND test_xinput)
+endif()

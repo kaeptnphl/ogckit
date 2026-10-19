@@ -15,6 +15,11 @@ controllers, and backend behavior may change. This is not a stable 1.0 release.
   system HID driver, no root).
   Other platforms can add a `backend_*.cpp` (see `src/internal.h`). Bluetooth is a goal, not done.
 
+Choose a backend explicitly for the intended target: `iohid` for macOS with the built-in HID driver,
+`ps4` for the OpenOrbis/PacBrew PS4 toolchain, or `libusb` for Linux/macOS/Windows development where
+libusb 1.0 development files are available. The default is `libusb`; it is not required for the
+macOS IOHID or PS4 builds.
+
 ## Build and try (libusb)
 
 Requires CMake, a C++17 compiler, pkg-config, and libusb 1.0 development files.
@@ -23,8 +28,12 @@ Requires CMake, a C++17 compiler, pkg-config, and libusb 1.0 development files.
     ctest --test-dir build --output-on-failure
     build/ogc-terminal            # prints state changes of a connected pad
 
-PS4: `-DOGC_BACKEND=ps4` with the PacBrew/OpenOrbis toolchain. The current `ps4`
-backend cross-build has succeeded with that toolchain, but has not been run on PS4
+For PS4 on Emma, use the OpenOrbis/PacBrew toolchain, for example:
+
+    cmake -S . -B build-ps4 -DOGC_BACKEND=ps4 -DCMAKE_TOOLCHAIN_FILE=/opt/pacbrew/ps4/openorbis/cmake/ps4.cmake
+    cmake --build build-ps4
+
+The current `ps4` backend cross-build has succeeded with that toolchain, but has not been run on PS4
 hardware; see the PS4 notes below.
 
 ## macOS IOHID backend

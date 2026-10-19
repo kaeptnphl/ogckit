@@ -7,7 +7,7 @@
 namespace ogc {
 
 const InterfaceInfo* xinputMatch(const DeviceInfo& dev) {
-    for (int i = 0; i < dev.numInterfaces; i++) {
+    for (int i = 0; i < dev.numInterfaces && i < 8; i++) {
         const InterfaceInfo& itf = dev.interfaces[i];
         if (itf.cls == 0xFF && itf.sub == 0x5D && itf.proto == 0x01 && itf.inEndpoint)
             return &itf;
@@ -20,7 +20,7 @@ static int16_t s16(const uint8_t* p) {
 }
 
 bool xinputParse(const uint8_t* d, int len, ogc_state& s) {
-    if (len < 14 || d[0] != 0x00 || d[1] < 14)
+    if (len < 14 || d[0] != 0x00 || d[1] < 14 || d[1] > len)
         return false;
     struct Bit {
         int byte;

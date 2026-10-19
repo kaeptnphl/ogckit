@@ -6,7 +6,7 @@
  *
  * Drivers so far: XInput (Xbox 360 class pads, 8BitDo GBros. in XInput mode, ...).
  * Backends (how USB is reached): PS4 (OpenOrbis, sceUsbd) and libusb (PC, for development).
- * Thread-safe; ogc_get() may be called from any thread.
+ * Lifecycle calls are serialized; ogc_get() may run concurrently from any thread.
  */
 #ifndef OGCKIT_H
 #define OGCKIT_H
@@ -50,15 +50,23 @@ typedef struct {
     char driver[16];        /* name of the driver serving this pad, e.g. "xinput" */
 } ogc_info;
 
-/* Optional; called from library threads. Set before ogc_init(). */
+/* Optional; set before ogc_init() or after ogc_shutdown(). Changes while initialized are
+ * ignored and reported to the current logger. Callbacks can run concurrently on library
+ * threads and the calling thread; they must be thread-safe and must not call ogc_init(),
+ * ogc_shutdown(), or ogc_set_log(). Calling ogc_get() from a callback is allowed. */
 void ogc_set_log(void (*fn)(const char* line));
 
-/* Starts the USB backend and device scanning. Returns 0 on success. */
+/* Starts the USB backend and device scanning. Returns 0 on success, negative on failure.
+ * Repeated init/shutdown calls are harmless. This is one process-wide instance, not
+ * reference-counted: any shutdown stops it. Concurrent lifecycle calls are serialized.
+ * Shutdown waits for an in-flight scan/open and all reader threads to finish. */
 int ogc_init(void);
 void ogc_shutdown(void);
 
 /* Slot 0..OGC_MAX_PADS-1; a pad keeps its slot while it stays plugged in.
- * Returns 1 and fills the outputs (either may be NULL) if a pad is connected there, else 0. */
+ * Returns 1 and fills a coherent snapshot (either output may be NULL) if a pad is
+ * connected there, else 0 and leaves outputs unchanged. Once shutdown begins, returns 0.
+ * Sequence and state reset on reconnection; sequence is not a device identity. */
 int ogc_get(int slot, ogc_info* info, ogc_state* state);
 
 #ifdef __cplusplus

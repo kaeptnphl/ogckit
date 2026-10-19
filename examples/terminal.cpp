@@ -1,4 +1,4 @@
-// Terminal demo for the libusb backend: prints pad state changes. Ctrl+C to quit.
+// Terminal demo (libusb or iohid backend): prints pad state changes. Ctrl+C to quit.
 #include <stdio.h>
 #include <unistd.h>
 

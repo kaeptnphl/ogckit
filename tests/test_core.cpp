@@ -31,6 +31,13 @@ int addPad(uint16_t key = 0x101) {
     return add_device(key, 0x045E, 0x028E, &itf, 1);
 }
 
+int addBluetoothPad(uint16_t key, uint16_t vid, uint16_t pid, uint16_t maxReport) {
+    const ogc::InterfaceInfo itf = {0, 0, 0, 0, 0x81, maxReport};
+    const int device = add_device(key, vid, pid, &itf, 1);
+    set_bluetooth(device, true);
+    return device;
+}
+
 std::mutex logMutex;
 std::vector<std::string> logs;
 void logger(const char* line) {
@@ -163,6 +170,180 @@ void parserAndReconnect() {
     CHECK(close_count(d) == 2);
 }
 
+void switchProBluetoothCore() {
+    reset();
+    const int d = addBluetoothPad(0x201, 0x057E, 0x2009, 362);
+    CHECK(ogc_init() == 0);
+    CHECK(wait_for_scan(1));
+    CHECK(waitUntil([&] { return ogc_get(0, nullptr, nullptr) == 1; }));
+
+    ogc_info info = {};
+    ogc_state state = {};
+    CHECK(ogc_get(0, &info, &state) == 1);
+    CHECK(info.vid == 0x057E && info.pid == 0x2009);
+    CHECK(std::strcmp(info.driver, "switch-pro-bt") == 0);
+    CHECK(state.sequence == 0);
+
+    // Reduced Bluetooth capture fixture: first 13 bytes from the report, zero-padded to 49.
+    const uint8_t capturedA[49] = {
+        0x30, 0x08, 0x40, 0x08, 0x00, 0x00, 0xF0, 0x07, 0x7F, 0x70,
+        0x09, 0x7F, 0x0B
+    };
+    set_read_result(d, sizeof(capturedA), capturedA, sizeof(capturedA));
+    CHECK(waitUntil([&] {
+        return ogc_get(0, nullptr, &state) && state.sequence == 1;
+    }));
+    CHECK(state.buttons == OGC_BTN_A);
+    CHECK(state.lx == -256 && state.ly == -256);
+    CHECK(state.rx == 5888 && state.ry == -256);
+
+    // Capture bit is a separate API button from Back, delivered from the captured report layout.
+    const uint8_t capturedCapture[49] = {
+        0x30, 0x5E, 0x40, 0x00, 0x20, 0x00, 0xF0, 0x07, 0x7F, 0x70,
+        0x09, 0x7F, 0x0B
+    };
+    set_read_result(d, sizeof(capturedCapture), capturedCapture, sizeof(capturedCapture));
+    CHECK(waitUntil([&] {
+        return ogc_get(0, nullptr, &state) && state.sequence == 2;
+    }));
+    CHECK(state.buttons == OGC_BTN_CAPTURE);
+
+    remove_device(d);
+    CHECK(waitUntil([] { return ogc_get(0, nullptr, nullptr) == 0; }));
+    CHECK(waitUntil([&] { return close_count(d) == 1; }));
+    reconnect_device(d);
+    CHECK(waitUntil([] { return ogc_get(0, nullptr, nullptr) == 1; }));
+    CHECK(ogc_get(0, &info, &state) == 1);
+    CHECK(info.vid == 0x057E && info.pid == 0x2009);
+    CHECK(std::strcmp(info.driver, "switch-pro-bt") == 0);
+    CHECK(state.sequence == 0 && state.buttons == 0 && state.lt == 0 && state.rt == 0);
+    CHECK(open_count(d) == 2);
+    ogc_shutdown();
+    CHECK(close_count(d) == 2);
+}
+
+void switchProUsbCore() {
+    reset();
+    const ogc::InterfaceInfo interfaces[2] = {
+        {0, 0xFF, 0, 0, 0x82, 32},
+        {1, 0x03, 0, 0, 0x81, 64}
+    };
+    const int d = add_device(0x203, 0x057E, 0x2009, interfaces, 2);
+    CHECK(ogc_init() == 0);
+    CHECK(wait_for_scan(1));
+    CHECK(waitUntil([&] { return ogc_get(0, nullptr, nullptr) == 1; }));
+
+    ogc_info info = {};
+    ogc_state state = {};
+    CHECK(ogc_get(0, &info, &state) == 1);
+    CHECK(info.vid == 0x057E && info.pid == 0x2009);
+    CHECK(std::strcmp(info.driver, "switch-pro-usb") == 0);
+
+    // Full 64-byte USB report 4432 from the passive capture, with its zero runs retained.
+    uint8_t capturedA[64] = {};
+    const uint8_t header[13] = {
+        0x30, 0xEA, 0x70, 0x08, 0x00, 0x00, 0xF0, 0x07, 0x80, 0xF0, 0x07, 0x80, 0x0B
+    };
+    std::memcpy(capturedA, header, sizeof(header));
+    capturedA[51] = 0x78;
+    capturedA[52] = 0x29;
+    capturedA[54] = 0x20;
+    capturedA[55] = 0x68;
+    capturedA[58] = 0x20;
+    capturedA[59] = 0x01;
+    capturedA[63] = 0x7D;
+    set_read_result(d, sizeof(capturedA), capturedA, sizeof(capturedA));
+    CHECK(waitUntil([&] {
+        return ogc_get(0, nullptr, &state) && state.sequence == 1;
+    }));
+    CHECK(state.buttons == OGC_BTN_A);
+    CHECK(state.lx == -256 && state.ly == 0);
+
+    const uint8_t capturedDpadUp[64] = {
+        0x30, 0xEE, 0x70, 0x00, 0x00, 0x02, 0xF0, 0x07, 0x80, 0xF0, 0x07, 0x80, 0x0B
+    };
+    set_read_result(d, sizeof(capturedDpadUp), capturedDpadUp, sizeof(capturedDpadUp));
+    CHECK(waitUntil([&] {
+        return ogc_get(0, nullptr, &state) && state.sequence == 2;
+    }));
+    CHECK(state.buttons == OGC_BTN_DPAD_UP);
+
+    const uint8_t capturedL[64] = {
+        0x30, 0xEA, 0x70, 0x00, 0x00, 0x40, 0xF0, 0x07, 0x80, 0xF0, 0x07, 0x80, 0x0B,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x78, 0x29, 0, 0x20, 0x68, 0, 0, 0x20,
+        0x01, 0, 0, 0, 0x7D
+    };
+    set_read_result(d, sizeof(capturedL), capturedL, sizeof(capturedL));
+    CHECK(waitUntil([&] {
+        return ogc_get(0, nullptr, &state) && state.sequence == 3;
+    }));
+    CHECK(state.buttons == OGC_BTN_LB && state.lt == 0 && state.rt == 0);
+
+    const uint8_t capturedR[64] = {
+        0x30, 0x7A, 0x70, 0x40, 0x00, 0x00, 0xF0, 0x07, 0x80, 0xF0, 0x07, 0x80, 0x0B,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x78, 0x29, 0, 0x20, 0x68, 0, 0, 0x20,
+        0x01, 0, 0, 0, 0x7D
+    };
+    set_read_result(d, sizeof(capturedR), capturedR, sizeof(capturedR));
+    CHECK(waitUntil([&] {
+        return ogc_get(0, nullptr, &state) && state.sequence == 4;
+    }));
+    CHECK(state.buttons == OGC_BTN_RB && state.lt == 0 && state.rt == 0);
+
+    remove_device(d);
+    CHECK(waitUntil([] { return ogc_get(0, nullptr, nullptr) == 0; }));
+    CHECK(waitUntil([&] { return close_count(d) == 1; }));
+    reconnect_device(d);
+    CHECK(waitUntil([&] { return ogc_get(0, nullptr, nullptr) == 1; }));
+    CHECK(ogc_get(0, &info, &state) == 1);
+    CHECK(std::strcmp(info.driver, "switch-pro-usb") == 0);
+    CHECK(state.sequence == 0 && state.buttons == 0 && state.lt == 0 && state.rt == 0);
+    CHECK(open_count(d) == 2);
+    ogc_shutdown();
+    CHECK(close_count(d) == 2);
+}
+
+void gbrosGuideCoreMerge() {
+    reset();
+    const int d = addBluetoothPad(0x202, 0x045E, 0x02E0, 16);
+    CHECK(ogc_init() == 0);
+    CHECK(wait_for_scan(1));
+    CHECK(waitUntil([&] { return ogc_get(0, nullptr, nullptr) == 1; }));
+
+    ogc_info info = {};
+    ogc_state state = {};
+    CHECK(ogc_get(0, &info, &state) == 1);
+    CHECK(std::strcmp(info.driver, "gbros-bt-xinput") == 0);
+
+    const uint8_t guidePress[2] = {0x02, 0x01};
+    set_read_result(d, sizeof(guidePress), guidePress, sizeof(guidePress));
+    CHECK(waitUntil([&] {
+        return ogc_get(0, nullptr, &state) && state.sequence == 1;
+    }));
+    CHECK(state.buttons == OGC_BTN_GUIDE);
+
+    const uint8_t gamepad[16] = {
+        0x01, 0x00, 0x80, 0x00, 0x80, 0xFF, 0x9B, 0x00,
+        0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00
+    };
+    set_read_result(d, sizeof(gamepad), gamepad, sizeof(gamepad));
+    CHECK(waitUntil([&] {
+        return ogc_get(0, nullptr, &state) && state.sequence == 2;
+    }));
+    CHECK(state.buttons == (OGC_BTN_GUIDE | OGC_BTN_A));
+
+    const uint8_t guideRelease[2] = {0x02, 0x00};
+    set_read_result(d, sizeof(guideRelease), guideRelease, sizeof(guideRelease));
+    CHECK(waitUntil([&] {
+        return ogc_get(0, nullptr, &state) && state.sequence == 3;
+    }));
+    CHECK(state.buttons == OGC_BTN_A);
+    ogc_shutdown();
+    CHECK(close_count(d) == 1);
+}
+
 void transportErrorRecovery() {
     reset();
     const int d = addPad();
@@ -257,6 +438,9 @@ int main(int argc, char** argv) {
         lifecycle();
         snapshotsAndSlots();
         parserAndReconnect();
+        switchProBluetoothCore();
+        switchProUsbCore();
+        gbrosGuideCoreMerge();
         transportErrorRecovery();
         retryAndRecovery();
         shutdownDuringOpen();

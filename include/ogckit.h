@@ -1,11 +1,14 @@
 /* OGCKit: Open Game Controller Kit.
  *
- * USB game controller input for console homebrew and emulators. A plain C API: devices are
- * found and dropped again while running (hotplug), each is served by a small driver that turns
- * the device's input reports into one common state. Read-only: nothing is ever sent to a pad.
+ * Game controller input for console homebrew and emulators. A plain C API: devices are found
+ * and dropped again while running (hotplug), each is served by a small driver that turns input
+ * reports into one common state.
  *
- * Drivers so far: XInput (Xbox 360 class pads, 8BitDo GBros. in XInput mode, ...).
- * Backends (how USB is reached): PS4 (OpenOrbis, sceUsbd) and libusb (PC, for development).
+ * Drivers so far: XInput (Xbox 360 class pads, 8BitDo GBros. in XInput mode, ...),
+ * and Switch-Pro-compatible Bluetooth/USB input from observed 057E:2009 report formats.
+ * Backends (how devices are reached): PS4 (OpenOrbis, sceUsbd), libusb (development),
+ * and macOS IOHID (system-owned HID devices, including the scoped GBros Bluetooth driver).
+ * Input is read-only: the library does not send output or feature reports.
  * Lifecycle calls are serialized; ogc_get() may run concurrently from any thread.
  */
 #ifndef OGCKIT_H
@@ -19,7 +22,7 @@ extern "C" {
 
 #define OGC_MAX_PADS 8
 
-/* Button bits (Xbox layout names; A is the bottom face button). */
+/* Button bits (Xbox layout names; A is the bottom face button; Capture is distinct from Back). */
 enum {
     OGC_BTN_A = 1u << 0,
     OGC_BTN_B = 1u << 1,
@@ -36,6 +39,7 @@ enum {
     OGC_BTN_DPAD_DOWN = 1u << 12,
     OGC_BTN_DPAD_LEFT = 1u << 13,
     OGC_BTN_DPAD_RIGHT = 1u << 14,
+    OGC_BTN_CAPTURE = 1u << 15,
 };
 
 typedef struct {
@@ -56,7 +60,7 @@ typedef struct {
  * ogc_shutdown(), or ogc_set_log(). Calling ogc_get() from a callback is allowed. */
 void ogc_set_log(void (*fn)(const char* line));
 
-/* Starts the USB backend and device scanning. Returns 0 on success, negative on failure.
+/* Starts the selected backend and device scanning. Returns 0 on success, negative on failure.
  * Repeated init/shutdown calls are harmless. This is one process-wide instance, not
  * reference-counted: any shutdown stops it. Concurrent lifecycle calls are serialized.
  * Shutdown waits for an in-flight scan/open and all reader threads to finish. */

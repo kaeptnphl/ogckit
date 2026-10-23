@@ -1,4 +1,4 @@
-// Fake USB backend: controls, snapshots and reader data share one mutex.
+// Fake backend: device controls, snapshots and reader data share one mutex.
 #include <cassert>
 #include <chrono>
 #include <condition_variable>
@@ -162,6 +162,11 @@ int add_device(uint16_t key, uint16_t vid, uint16_t pid,
     for (int i = 0; i < numInterfaces; ++i)
         d.info.interfaces[i] = interfaces[i];
     return index;
+}
+
+void set_bluetooth(int index, bool bluetooth) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    device(index).info.bluetooth = bluetooth;
 }
 
 void set_open_fail(int index, bool fail) {

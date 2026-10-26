@@ -10,6 +10,7 @@ void reset();
 void set_init_result(int code);
 int add_device(uint16_t key, uint16_t vid, uint16_t pid,
                const InterfaceInfo* interfaces, int numInterfaces);
+void set_bluetooth(int index, bool bluetooth);
 void set_open_fail(int index, bool fail);
 // Positive reports are consumed once; zero simulates an idle timeout.
 void set_read_result(int index, int result, const uint8_t* data = nullptr, int len = 0);

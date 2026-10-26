@@ -2,17 +2,21 @@
 
 The long-term goal is a universal controller-input library for homebrew and
 emulators, with broad controller-protocol and connection-transport coverage behind
-a common C API. That direction may include Bluetooth and additional transports;
-the baseline implementation connects over USB only. Today's early proof of
+a common C API. This local integration includes USB support and narrowly scoped
+Bluetooth HID input through macOS IOHID. Today's early proof of
 concept is a starting point, not universal support or a complete catalog of
 intended protocols and transports. The status below distinguishes the baseline
-from work on an open feature branch. Version `0.1.0` is tentative; there are no
-promised dates or release commitments.
+from this local integration; upstream review and merge status are separate.
+Version `0.1.0` is tentative; there are no promised dates or release commitments.
 
 ## Implemented
 
 - Common controller-state C API, device discovery, and synchronized runtime.
 - Initial Xbox 360-class XInput report driver.
+- Captured Switch-Pro-compatible USB reports from the tested Miadore N64
+  receiver in Mode A, with parser and runtime tests.
+- Scoped macOS Bluetooth HID input for observed GBros X-Input and
+  Switch-compatible report layouts.
 - USB backend choices: desktop libusb, macOS IOHID, and PS4 `sceUsbd`.
 - Hardware-free parser, runtime, and report-queue tests.
 - PS4 OpenOrbis cross-build and limited hardware evidence, including a confirmed
@@ -21,13 +25,13 @@ promised dates or release commitments.
 Implementation and setup-specific tests do not establish general compatibility.
 See the [developer guide](docs/development.md#hardware-evidence) for evidence and scope.
 
-## In review: GBros Bluetooth and Switch-compatible USB
+## Local integration and upstream review
 
 [PR #1](https://github.com/kaeptnphl/ogckit/pull/1), commit
-`7dff7469f89576487512a59618021f7fc8f1b8b4`, contains scoped macOS IOHID
-Bluetooth support for GBros X-Input and Switch-compatible Bluetooth/USB report
-parsers, passive capture tooling, and captured-report regressions. It is not
-merged into the baseline described above.
+`7dff7469f89576487512a59618021f7fc8f1b8b4`, is the upstream review source for
+the scoped Bluetooth HID paths, passive capture tooling, and captured-report
+regressions now included in this local integration. This does not merge or
+change GitHub `main`; the PR's upstream review status remains separate.
 
 - On the tested Mac, GBros Bluetooth X-Input provides analog GameCube triggers.
   The tested S-Input Bluetooth setups provide digital trigger/button fields;
@@ -35,7 +39,7 @@ merged into the baseline described above.
 - The RVL-005 Classic Controller was exercised through the Wii Extension port.
   A focused S-Input USB capture confirmed digital L/R-to-LB/RB mapping.
   Analog USB trigger travel and additional report-tail semantics remain unknown.
-- Native macOS build and five hardware-free test targets passed. The exact PR
+- Native macOS build and six hardware-free test targets passed. The exact PR
   commit also compiled and linked with OGCTester using the existing PS4
   PacBrew/OpenOrbis toolchain on Emma; ELF/OELF/SELF verification passed.
 - The corrected `OGCP10001` test package was installed and started on PS4,

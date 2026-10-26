@@ -3,7 +3,8 @@
 // Observed on macOS with a GBros adapter (045E:028E): Apple's XboxGamepad driver publishes an
 // IOHIDDevice directly under the FF/5D/01 USB interface. Its 20-byte input report has no report
 // ID and keeps the raw XInput byte layout, so the unchanged XInput driver parses it. Other drivers
-// or macOS versions may differ; reports the driver does not recognize are ignored, not guessed.
+// or macOS versions may differ. Bluetooth support is restricted to the observed GBros X-Input and
+// Switch-Pro-compatible identities, Game Pad usage, and observed report sizes.
 #include <IOKit/IOKitLib.h>
 #include <IOKit/hid/IOHIDDevice.h>
 #include <IOKit/hid/IOHIDKeys.h>
@@ -102,21 +103,45 @@ bool intProperty(io_service_t service, CFStringRef key, bool searchParents, int&
     return ok;
 }
 
-void setInt(CFMutableDictionaryRef dict, CFStringRef key, int value) {
-    CFNumberRef n = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &value);
-    if (n) {
-        CFDictionarySetValue(dict, key, n);
-        CFRelease(n);
-    }
+bool stringProperty(io_service_t service, CFStringRef key, CFStringRef expected) {
+    CFTypeRef value = IORegistryEntryCreateCFProperty(service, key, kCFAllocatorDefault, 0);
+    if (!value)
+        return false;
+    const bool matches = CFGetTypeID(value) == CFStringGetTypeID() &&
+                         CFStringCompare(static_cast<CFStringRef>(value), expected, 0) ==
+                             kCFCompareEqualTo;
+    CFRelease(value);
+    return matches;
 }
 
-// Only HID devices backed by a USB interface are described; the interface triple comes from the
-// nearest IOUSBHostInterface ancestor so the existing drivers keep making the match decision.
+// USB devices retain their interface-based matching. Bluetooth is intentionally restricted to
+// observed gamepad identities and Generic Desktop/Game Pad usage.
 bool describe(io_service_t service, DeviceInfo& out) {
     int vid = 0, pid = 0, num = 0, cls = 0, sub = 0, proto = 0, maxIn = 0;
     if (!intProperty(service, CFSTR(kIOHIDVendorIDKey), false, vid) ||
         !intProperty(service, CFSTR(kIOHIDProductIDKey), false, pid))
         return false;
+    if (stringProperty(service, CFSTR(kIOHIDTransportKey), CFSTR("Bluetooth"))) {
+        int usagePage = 0, usage = 0;
+        if (!intProperty(service, CFSTR(kIOHIDPrimaryUsagePageKey), false, usagePage) ||
+            !intProperty(service, CFSTR(kIOHIDPrimaryUsageKey), false, usage) ||
+            usagePage != kHIDPage_GenericDesktop || usage != kHIDUsage_GD_GamePad)
+            return false;
+        if (!intProperty(service, CFSTR(kIOHIDMaxInputReportSizeKey), false, maxIn))
+            return false;
+        const bool gbros = vid == 0x045E && pid == 0x02E0 && maxIn == 16;
+        const bool switchPro = vid == 0x057E && pid == 0x2009 && maxIn == 362;
+        if (!gbros && !switchPro)
+            return false;
+        out = {};
+        out.vid = static_cast<uint16_t>(vid);
+        out.pid = static_cast<uint16_t>(pid);
+        out.bluetooth = true;
+        out.numInterfaces = 1;
+        out.interfaces[0] = {0, 0, 0, 0, kSyntheticInEndpoint,
+                             static_cast<uint16_t>(maxIn)};
+        return true;
+    }
     if (!intProperty(service, CFSTR("bInterfaceClass"), true, cls) ||
         !intProperty(service, CFSTR("bInterfaceSubClass"), true, sub) ||
         !intProperty(service, CFSTR("bInterfaceProtocol"), true, proto) ||
@@ -126,6 +151,7 @@ bool describe(io_service_t service, DeviceInfo& out) {
     out = {};
     out.vid = static_cast<uint16_t>(vid);
     out.pid = static_cast<uint16_t>(pid);
+    out.bluetooth = false;
     out.numInterfaces = 1;
     out.interfaces[0] = {static_cast<uint8_t>(num), static_cast<uint8_t>(cls),
                          static_cast<uint8_t>(sub), static_cast<uint8_t>(proto),
@@ -145,7 +171,6 @@ void scan(void (*visit)(void*, uint16_t, const DeviceInfo&, void*), void* user) 
         logf("ogckit: iohid matching dictionary allocation failed");
         return;
     }
-    setInt(match, CFSTR(kIOHIDPrimaryUsagePageKey), kHIDPage_GenericDesktop);
     io_iterator_t it = IO_OBJECT_NULL;
     const kern_return_t kr = IOServiceGetMatchingServices(kIOMainPortDefault, match, &it);  // consumes match
     if (kr != KERN_SUCCESS) {
@@ -183,7 +208,7 @@ void onReport(void* context, IOReturn result, void*, IOHIDReportType, uint32_t, 
             logf("ogckit: iohid input report failed: 0x%08X", result);
         return;
     }
-    if (length > ReportQueue::kMaxReport) {
+    if (length <= 0 || length > ReportQueue::kMaxReport) {
         if (!h->loggedOversized.exchange(true))
             logf("ogckit: iohid dropped %ld-byte input report (limit %d)", static_cast<long>(length),
                  ReportQueue::kMaxReport);

@@ -21,7 +21,8 @@ struct OpenFailure {
 
 OpenFailure g_openFailures[16];
 
-const Driver* const kDrivers[] = {&kXInputDriver, &kSwitchProUsbDriver};
+const Driver* const kDrivers[] = {&kXInputDriver, &kGbrosBluetoothDriver,
+                                  &kSwitchProBluetoothDriver, &kSwitchProUsbDriver};
 
 struct Slot {
     bool used = false;
@@ -61,7 +62,7 @@ namespace {
 
 void* readerMain(void* arg) {
     Slot* s = static_cast<Slot*>(arg);
-    uint8_t buf[64];
+    uint8_t buf[512];
     const int len = s->itf.inMaxPacket > 0 && s->itf.inMaxPacket < sizeof(buf) ? s->itf.inMaxPacket
                                                                               : sizeof(buf);
     for (;;) {
@@ -73,7 +74,8 @@ void* readerMain(void* arg) {
         const int got = kBackend.read(s->handle, s->itf.inEndpoint, buf, len, kReadTimeoutMs);
         if (got > 0) {
             pthread_mutex_lock(&g_mutex);
-            if (s->driver->parse(buf, got, s->state))
+            const bool parsed = s->driver->parse(buf, got, s->state);
+            if (parsed)
                 s->state.sequence++;
             pthread_mutex_unlock(&g_mutex);
         } else if (got < 0) {

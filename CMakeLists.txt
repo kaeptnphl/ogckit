@@ -16,24 +16,37 @@ option(OGC_BUILD_LIBRARY "Build the library and terminal example" ON)
 include(CTest)
 
 # Keep the test-only mock runtime and queue tests free of hardware dependencies.
-if(BUILD_TESTING)
+if(BUILD_TESTING AND NOT OGC_BACKEND STREQUAL "ps4")
   find_package(Threads REQUIRED)
   add_executable(test_xinput tests/test_xinput.cpp src/drv_xinput.cpp)
   target_include_directories(test_xinput PRIVATE include)
   target_compile_features(test_xinput PRIVATE cxx_std_17)
   add_test(NAME xinput COMMAND test_xinput)
 
-  add_executable(test_switch_pro_usb tests/test_switch_pro_usb.cpp src/drv_switch_pro_usb.cpp)
+  add_executable(test_switch_pro_usb tests/test_switch_pro_usb.cpp src/drv_switch_pro_bluetooth.cpp)
   target_include_directories(test_switch_pro_usb PRIVATE include)
   target_compile_features(test_switch_pro_usb PRIVATE cxx_std_17)
   add_test(NAME switch_pro_usb COMMAND test_switch_pro_usb)
+
+  add_executable(test_gbros_bluetooth tests/test_gbros_bluetooth.cpp src/drv_gbros_bluetooth.cpp)
+  target_include_directories(test_gbros_bluetooth PRIVATE include)
+  target_compile_features(test_gbros_bluetooth PRIVATE cxx_std_17)
+  add_test(NAME gbros_bluetooth COMMAND test_gbros_bluetooth)
+
+  add_executable(test_switch_pro_bluetooth
+      tests/test_switch_pro_bluetooth.cpp
+      src/drv_switch_pro_bluetooth.cpp)
+  target_include_directories(test_switch_pro_bluetooth PRIVATE include)
+  target_compile_features(test_switch_pro_bluetooth PRIVATE cxx_std_17)
+  add_test(NAME switch_pro_bluetooth COMMAND test_switch_pro_bluetooth)
 
   add_executable(test_core
       tests/test_core.cpp
       tests/backend_test.cpp
       src/core.cpp
       src/drv_xinput.cpp
-      src/drv_switch_pro_usb.cpp)
+      src/drv_gbros_bluetooth.cpp
+      src/drv_switch_pro_bluetooth.cpp)
   target_include_directories(test_core PRIVATE include)
   target_compile_features(test_core PRIVATE cxx_std_17)
   target_link_libraries(test_core PRIVATE Threads::Threads)
@@ -52,7 +65,8 @@ if(OGC_BUILD_LIBRARY)
     add_library(ogckit STATIC
         src/core.cpp
         src/drv_xinput.cpp
-        src/drv_switch_pro_usb.cpp
+        src/drv_gbros_bluetooth.cpp
+        src/drv_switch_pro_bluetooth.cpp
         src/backend_${OGC_BACKEND}.cpp)
     target_include_directories(ogckit PUBLIC include)
     target_compile_features(ogckit PRIVATE cxx_std_17)
@@ -62,6 +76,12 @@ if(OGC_BUILD_LIBRARY)
       target_link_libraries(ogckit PUBLIC PkgConfig::LIBUSB)
     elseif(OGC_BACKEND STREQUAL "iohid")
       target_link_libraries(ogckit PUBLIC "-framework IOKit" "-framework CoreFoundation")
+    endif()
+
+    if(APPLE)
+      add_executable(bluetooth_hid_capture tools/bluetooth_hid_capture.cpp)
+      target_compile_features(bluetooth_hid_capture PRIVATE cxx_std_17)
+      target_link_libraries(bluetooth_hid_capture PRIVATE "-framework IOKit" "-framework CoreFoundation")
     endif()
     find_package(Threads REQUIRED)
     target_link_libraries(ogckit PUBLIC Threads::Threads)
@@ -76,7 +96,8 @@ if(OGC_BUILD_LIBRARY)
     add_library(ogckit STATIC
         src/core.cpp
         src/drv_xinput.cpp
-        src/drv_switch_pro_usb.cpp
+        src/drv_gbros_bluetooth.cpp
+        src/drv_switch_pro_bluetooth.cpp
         src/backend_ps4.cpp)
     target_include_directories(ogckit PUBLIC include)
     target_compile_features(ogckit PRIVATE cxx_std_17)

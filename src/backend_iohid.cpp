@@ -3,7 +3,8 @@
 // Observed on macOS with a GBros adapter (045E:028E): Apple's XboxGamepad driver publishes an
 // IOHIDDevice directly under the FF/5D/01 USB interface. Its 20-byte input report has no report
 // ID and keeps the raw XInput byte layout, so the unchanged XInput driver parses it. Other drivers
-// or macOS versions may differ; reports the driver does not recognize are ignored, not guessed.
+// or macOS versions may differ. Bluetooth support is restricted to the observed GBros X-Input and
+// Switch-Pro-compatible identities, Game Pad usage, and observed report sizes.
 #include <IOKit/IOKitLib.h>
 #include <IOKit/hid/IOHIDDevice.h>
 #include <IOKit/hid/IOHIDKeys.h>
@@ -13,6 +14,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <new>
 
 #include "internal.h"
@@ -31,8 +33,62 @@ struct Handle {
     ReportQueue reports;
     std::atomic<bool> loggedReportError{false};
     std::atomic<bool> loggedOversized{false};
+    std::atomic<unsigned> reportCount{0};
+    std::atomic<uint64_t> lastReportMs{0};
+    std::atomic<bool> removalReported{false};
+    uint64_t hidRegistryId = 0;
+    uint64_t usbInterfaceRegistryId = 0;
+    uint64_t usbDeviceRegistryId = 0;
     uint8_t buffer[ReportQueue::kMaxReport] = {};
 };
+
+struct UsbRegistryIds {
+    uint64_t interfaceId = 0;
+    uint64_t deviceId = 0;
+};
+
+uint64_t timestampMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+UsbRegistryIds usbRegistryIds(io_service_t service) {
+    UsbRegistryIds ids;
+    io_service_t parent = IO_OBJECT_NULL;
+    if (IORegistryEntryGetParentEntry(service, kIOServicePlane, &parent) != KERN_SUCCESS)
+        return ids;
+    while (parent != IO_OBJECT_NULL) {
+        char className[128] = {};
+        uint64_t id = 0;
+        if (IOObjectGetClass(parent, className) == KERN_SUCCESS) {
+            const bool isUsbInterface =
+                std::strcmp(className, "IOUSBHostInterface") == 0 ||
+                std::strcmp(className, "IOUSBInterface") == 0;
+            const bool isUsbDevice =
+                std::strcmp(className, "IOUSBHostDevice") == 0 ||
+                std::strcmp(className, "IOUSBDevice") == 0;
+            if ((isUsbInterface && ids.interfaceId == 0) || (isUsbDevice && ids.deviceId == 0)) {
+                if (IORegistryEntryGetRegistryEntryID(parent, &id) == KERN_SUCCESS) {
+                    if (isUsbInterface)
+                        ids.interfaceId = id;
+                    else
+                        ids.deviceId = id;
+                }
+            }
+        }
+        if (ids.interfaceId && ids.deviceId) {
+            IOObjectRelease(parent);
+            return ids;
+        }
+        io_service_t next = IO_OBJECT_NULL;
+        const kern_return_t kr = IORegistryEntryGetParentEntry(parent, kIOServicePlane, &next);
+        IOObjectRelease(parent);
+        if (kr != KERN_SUCCESS)
+            break;
+        parent = next;
+    }
+    return ids;
+}
 
 bool intProperty(io_service_t service, CFStringRef key, bool searchParents, int& out) {
     CFTypeRef v = searchParents
@@ -47,21 +103,45 @@ bool intProperty(io_service_t service, CFStringRef key, bool searchParents, int&
     return ok;
 }
 
-void setInt(CFMutableDictionaryRef dict, CFStringRef key, int value) {
-    CFNumberRef n = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &value);
-    if (n) {
-        CFDictionarySetValue(dict, key, n);
-        CFRelease(n);
-    }
+bool stringProperty(io_service_t service, CFStringRef key, CFStringRef expected) {
+    CFTypeRef value = IORegistryEntryCreateCFProperty(service, key, kCFAllocatorDefault, 0);
+    if (!value)
+        return false;
+    const bool matches = CFGetTypeID(value) == CFStringGetTypeID() &&
+                         CFStringCompare(static_cast<CFStringRef>(value), expected, 0) ==
+                             kCFCompareEqualTo;
+    CFRelease(value);
+    return matches;
 }
 
-// Only HID devices backed by a USB interface are described; the interface triple comes from the
-// nearest IOUSBHostInterface ancestor so the existing drivers keep making the match decision.
+// USB devices retain their interface-based matching. Bluetooth is intentionally restricted to
+// observed gamepad identities and Generic Desktop/Game Pad usage.
 bool describe(io_service_t service, DeviceInfo& out) {
     int vid = 0, pid = 0, num = 0, cls = 0, sub = 0, proto = 0, maxIn = 0;
     if (!intProperty(service, CFSTR(kIOHIDVendorIDKey), false, vid) ||
         !intProperty(service, CFSTR(kIOHIDProductIDKey), false, pid))
         return false;
+    if (stringProperty(service, CFSTR(kIOHIDTransportKey), CFSTR("Bluetooth"))) {
+        int usagePage = 0, usage = 0;
+        if (!intProperty(service, CFSTR(kIOHIDPrimaryUsagePageKey), false, usagePage) ||
+            !intProperty(service, CFSTR(kIOHIDPrimaryUsageKey), false, usage) ||
+            usagePage != kHIDPage_GenericDesktop || usage != kHIDUsage_GD_GamePad)
+            return false;
+        if (!intProperty(service, CFSTR(kIOHIDMaxInputReportSizeKey), false, maxIn))
+            return false;
+        const bool gbros = vid == 0x045E && pid == 0x02E0 && maxIn == 16;
+        const bool switchPro = vid == 0x057E && pid == 0x2009 && maxIn == 362;
+        if (!gbros && !switchPro)
+            return false;
+        out = {};
+        out.vid = static_cast<uint16_t>(vid);
+        out.pid = static_cast<uint16_t>(pid);
+        out.bluetooth = true;
+        out.numInterfaces = 1;
+        out.interfaces[0] = {0, 0, 0, 0, kSyntheticInEndpoint,
+                             static_cast<uint16_t>(maxIn)};
+        return true;
+    }
     if (!intProperty(service, CFSTR("bInterfaceClass"), true, cls) ||
         !intProperty(service, CFSTR("bInterfaceSubClass"), true, sub) ||
         !intProperty(service, CFSTR("bInterfaceProtocol"), true, proto) ||
@@ -71,6 +151,7 @@ bool describe(io_service_t service, DeviceInfo& out) {
     out = {};
     out.vid = static_cast<uint16_t>(vid);
     out.pid = static_cast<uint16_t>(pid);
+    out.bluetooth = false;
     out.numInterfaces = 1;
     out.interfaces[0] = {static_cast<uint8_t>(num), static_cast<uint8_t>(cls),
                          static_cast<uint8_t>(sub), static_cast<uint8_t>(proto),
@@ -90,8 +171,6 @@ void scan(void (*visit)(void*, uint16_t, const DeviceInfo&, void*), void* user) 
         logf("ogckit: iohid matching dictionary allocation failed");
         return;
     }
-    setInt(match, CFSTR(kIOHIDPrimaryUsagePageKey), kHIDPage_GenericDesktop);
-    setInt(match, CFSTR(kIOHIDPrimaryUsageKey), kHIDUsage_GD_GamePad);
     io_iterator_t it = IO_OBJECT_NULL;
     const kern_return_t kr = IOServiceGetMatchingServices(kIOMainPortDefault, match, &it);  // consumes match
     if (kr != KERN_SUCCESS) {
@@ -100,8 +179,13 @@ void scan(void (*visit)(void*, uint16_t, const DeviceInfo&, void*), void* user) 
     }
     while (io_service_t service = IOIteratorNext(it)) {
         DeviceInfo di;
+        int usagePage = 0, usage = 0;
         uint64_t id = 0;
-        if (describe(service, di) && IORegistryEntryGetRegistryEntryID(service, &id) == KERN_SUCCESS) {
+        if (intProperty(service, CFSTR(kIOHIDPrimaryUsagePageKey), false, usagePage) &&
+            intProperty(service, CFSTR(kIOHIDPrimaryUsageKey), false, usage) &&
+            usagePage == kHIDPage_GenericDesktop &&
+            (usage == kHIDUsage_GD_GamePad || usage == kHIDUsage_GD_Joystick) &&
+            describe(service, di) && IORegistryEntryGetRegistryEntryID(service, &id) == KERN_SUCCESS) {
             // The registry entry ID is stable while the device stays attached and changes on replug.
             visit(reinterpret_cast<void*>(static_cast<uintptr_t>(service)),
                   static_cast<uint16_t>(id & 0xFFFF), di, user);
@@ -115,21 +199,44 @@ void onReport(void* context, IOReturn result, void*, IOHIDReportType, uint32_t, 
               CFIndex length) {
     auto* h = static_cast<Handle*>(context);
     if (result != kIOReturnSuccess) {
+        logf(        "ogckit: iohid diag t=%llu report-error hid=%llu usb-interface=%llu usb-device=%llu result=0x%08X",
+             static_cast<unsigned long long>(timestampMs()),
+             static_cast<unsigned long long>(h->hidRegistryId),
+        static_cast<unsigned long long>(h->usbInterfaceRegistryId),
+        static_cast<unsigned long long>(h->usbDeviceRegistryId), result);
         if (!h->loggedReportError.exchange(true))
             logf("ogckit: iohid input report failed: 0x%08X", result);
         return;
     }
-    if (length > ReportQueue::kMaxReport) {
+    if (length <= 0 || length > ReportQueue::kMaxReport) {
         if (!h->loggedOversized.exchange(true))
             logf("ogckit: iohid dropped %ld-byte input report (limit %d)", static_cast<long>(length),
                  ReportQueue::kMaxReport);
         return;
     }
+    const unsigned previousCount = h->reportCount.fetch_add(1);
+    h->lastReportMs.store(timestampMs());
+    if (previousCount == 0)
+        logf("ogckit: iohid diag t=%llu first-report hid=%llu usb-interface=%llu usb-device=%llu len=%ld id=%u",
+             static_cast<unsigned long long>(timestampMs()),
+             static_cast<unsigned long long>(h->hidRegistryId),
+             static_cast<unsigned long long>(h->usbInterfaceRegistryId),
+             static_cast<unsigned long long>(h->usbDeviceRegistryId), static_cast<long>(length),
+             length > 0 ? report[0] : 0);
     h->reports.push(report, static_cast<int>(length));
 }
 
-void onRemoved(void* context, IOReturn, void*) {
-    static_cast<Handle*>(context)->reports.markGone();
+void onRemoved(void* context, IOReturn result, void*) {
+    auto* h = static_cast<Handle*>(context);
+    h->removalReported.store(true);
+    const uint64_t lastReportMs = h->lastReportMs.load();
+    logf("ogckit: iohid diag t=%llu removed hid=%llu usb-interface=%llu usb-device=%llu result=0x%08X reports=%u last-report-age-ms=%lld",
+         static_cast<unsigned long long>(timestampMs()),
+         static_cast<unsigned long long>(h->hidRegistryId),
+         static_cast<unsigned long long>(h->usbInterfaceRegistryId),
+         static_cast<unsigned long long>(h->usbDeviceRegistryId), result, h->reportCount.load(),
+         static_cast<long long>(lastReportMs ? timestampMs() - lastReportMs : -1));
+    h->reports.markGone();
 }
 
 void* open(void* dev, uint8_t) {
@@ -163,6 +270,15 @@ void* open(void* dev, uint8_t) {
     }
     h->device = device;
     h->queue = queue;
+    IORegistryEntryGetRegistryEntryID(service, &h->hidRegistryId);
+    const UsbRegistryIds usbIds = usbRegistryIds(service);
+    h->usbInterfaceRegistryId = usbIds.interfaceId;
+    h->usbDeviceRegistryId = usbIds.deviceId;
+    logf("ogckit: iohid diag t=%llu opened hid=%llu usb-interface=%llu usb-device=%llu",
+         static_cast<unsigned long long>(timestampMs()),
+         static_cast<unsigned long long>(h->hidRegistryId),
+         static_cast<unsigned long long>(h->usbInterfaceRegistryId),
+         static_cast<unsigned long long>(h->usbDeviceRegistryId));
     IOHIDDeviceRegisterInputReportCallback(device, h->buffer, sizeof(h->buffer), onReport, h);
     IOHIDDeviceRegisterRemovalCallback(device, onRemoved, h);
     IOHIDDeviceSetDispatchQueue(device, queue);
@@ -179,6 +295,12 @@ int read(void* handle, uint8_t, uint8_t* buf, int len, int timeoutMs) {
 
 void close(void* handle, uint8_t) {
     auto* h = static_cast<Handle*>(handle);
+    logf("ogckit: iohid diag t=%llu closing hid=%llu usb-interface=%llu usb-device=%llu removed=%d reports=%u",
+         static_cast<unsigned long long>(timestampMs()),
+         static_cast<unsigned long long>(h->hidRegistryId),
+         static_cast<unsigned long long>(h->usbInterfaceRegistryId),
+         static_cast<unsigned long long>(h->usbDeviceRegistryId), h->removalReported.load(),
+         h->reportCount.load());
     // Callbacks reference h until the cancel handler has run on the device queue.
     IOHIDDeviceCancel(h->device);
     if (!h->reports.waitCancelled(kCancelWaitMs)) {
@@ -189,6 +311,9 @@ void close(void* handle, uint8_t) {
     if (h->reports.dropped())
         logf("ogckit: iohid dropped %u stale input reports", h->reports.dropped());
     const IOReturn r = IOHIDDeviceClose(h->device, kIOHIDOptionsTypeNone);
+    logf("ogckit: iohid diag t=%llu close-result hid=%llu result=0x%08X",
+         static_cast<unsigned long long>(timestampMs()),
+         static_cast<unsigned long long>(h->hidRegistryId), r);
     if (r != kIOReturnSuccess && r != kIOReturnNotAttached && r != kIOReturnNoDevice)
         logf("ogckit: iohid close failed: 0x%08X", r);
     CFRelease(h->device);

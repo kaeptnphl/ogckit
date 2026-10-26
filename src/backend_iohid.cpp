@@ -13,7 +13,10 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <new>
+#include <string>
+#include <vector>
 
 #include "internal.h"
 #include "report_queue.h"
@@ -22,7 +25,6 @@ namespace ogc {
 namespace {
 
 // IOHID has no endpoints; a non-zero IN endpoint lets drivers match. read() ignores it.
-constexpr uint8_t kSyntheticInEndpoint = 0x81;
 constexpr int kCancelWaitMs = 2000;
 
 struct Handle {
@@ -55,26 +57,90 @@ void setInt(CFMutableDictionaryRef dict, CFStringRef key, int value) {
     }
 }
 
-// Only HID devices backed by a USB interface are described; the interface triple comes from the
-// nearest IOUSBHostInterface ancestor so the existing drivers keep making the match decision.
+// Gated by OGC_IOHID_DIAG=1, this logs the raw HID properties of every enumerated service so the
+// Bluetooth discovery path can be verified without a parser or live report capture. It never
+// changes which devices are described and never infers report formats.
+static void logDiagnostic(io_service_t service) {
+    int vid = 0, pid = 0, cls = 0, sub = 0, proto = 0, num = 0, maxIn = 0, maxOut = 0;
+    CFTypeRef t = IORegistryEntryCreateCFProperty(service, CFSTR(kIOHIDTransportKey),
+                                                  kCFAllocatorDefault, 0);
+    std::string transport;
+    if (t) {
+        if (CFGetTypeID(t) == CFStringGetTypeID()) {
+            CFStringRef s = static_cast<CFStringRef>(t);
+            CFIndex n = CFStringGetLength(s) + 1;
+            std::vector<char> buf(static_cast<size_t>(n));
+            if (CFStringGetCString(s, buf.data(), n, kCFStringEncodingUTF8))
+                transport = buf.data();
+        }
+        CFRelease(t);
+    }
+    intProperty(service, CFSTR(kIOHIDVendorIDKey), false, vid);
+    intProperty(service, CFSTR(kIOHIDProductIDKey), false, pid);
+    intProperty(service, CFSTR("bInterfaceClass"), true, cls);
+    intProperty(service, CFSTR("bInterfaceSubClass"), true, sub);
+    intProperty(service, CFSTR("bInterfaceProtocol"), true, proto);
+    intProperty(service, CFSTR("bInterfaceNumber"), true, num);
+    intProperty(service, CFSTR(kIOHIDMaxInputReportSizeKey), false, maxIn);
+    intProperty(service, CFSTR(kIOHIDMaxOutputReportSizeKey), false, maxOut);
+    logf("ogckit: iohid diag VID=0x%04X PID=0x%04X transport=%s bInterface=%d/%d/%d/%d "
+         "maxIn=%d maxOut=%d",
+         vid, pid, transport.empty() ? "(none)" : transport.c_str(), cls, sub, proto, num, maxIn,
+         maxOut);
+}
+
+// Reads the transport family reported by the HID service itself. Returns false when the property
+// is absent or not a string, so callers can fall back to USB-only behaviour.
+bool transportString(io_service_t service, CFStringRef key, CFStringRef& out) {
+    CFTypeRef v = IORegistryEntryCreateCFProperty(service, key, kCFAllocatorDefault, 0);
+    if (!v)
+        return false;
+    const bool ok = CFGetTypeID(v) == CFStringGetTypeID();
+    if (ok)
+        out = static_cast<CFStringRef>(v);
+    else
+        CFRelease(v);
+    return ok;
+}
+
+// HID devices may be backed by a USB interface or by Bluetooth. The interface triple is only
+// meaningful when a USB interface ancestor exists; a Bluetooth HID gamepad has none, so the
+// triple is left zeroed and the device is still described when its own HID properties prove it is
+// a gamepad. The existing drivers decide whether to match on that basis.
 bool describe(io_service_t service, DeviceInfo& out) {
     int vid = 0, pid = 0, num = 0, cls = 0, sub = 0, proto = 0, maxIn = 0;
     if (!intProperty(service, CFSTR(kIOHIDVendorIDKey), false, vid) ||
         !intProperty(service, CFSTR(kIOHIDProductIDKey), false, pid))
         return false;
-    if (!intProperty(service, CFSTR("bInterfaceClass"), true, cls) ||
-        !intProperty(service, CFSTR("bInterfaceSubClass"), true, sub) ||
-        !intProperty(service, CFSTR("bInterfaceProtocol"), true, proto) ||
-        !intProperty(service, CFSTR("bInterfaceNumber"), true, num))
-        return false;
+    const bool hasUsbInterface =
+        intProperty(service, CFSTR("bInterfaceClass"), true, cls) &&
+        intProperty(service, CFSTR("bInterfaceSubClass"), true, sub) &&
+        intProperty(service, CFSTR("bInterfaceProtocol"), true, proto) &&
+        intProperty(service, CFSTR("bInterfaceNumber"), true, num);
     intProperty(service, CFSTR(kIOHIDMaxInputReportSizeKey), false, maxIn);
     out = {};
     out.vid = static_cast<uint16_t>(vid);
     out.pid = static_cast<uint16_t>(pid);
     out.numInterfaces = 1;
-    out.interfaces[0] = {static_cast<uint8_t>(num), static_cast<uint8_t>(cls),
-                         static_cast<uint8_t>(sub), static_cast<uint8_t>(proto),
-                         kSyntheticInEndpoint, static_cast<uint16_t>(maxIn)};
+    if (hasUsbInterface) {
+        // USB interface triple from the nearest IOUSBHostInterface ancestor.
+        out.interfaces[0] = {static_cast<uint8_t>(num), static_cast<uint8_t>(cls),
+                             static_cast<uint8_t>(sub), static_cast<uint8_t>(proto),
+                             0x81, static_cast<uint16_t>(maxIn)};
+    } else {
+        // No USB interface: only describe the device when it is a Bluetooth HID gamepad, so the
+        // existing drivers can still match it. The interface triple stays zeroed and the synthetic
+        // IN endpoint is 0x81 so a driver that wants an endpoint can match.
+        CFStringRef transport = nullptr;
+        if (!transportString(service, CFSTR(kIOHIDTransportKey), transport))
+            return false;
+        const bool isBluetooth =
+            CFStringCompare(transport, CFSTR("Bluetooth"), 0) == kCFCompareEqualTo;
+        CFRelease(transport);
+        if (!isBluetooth)
+            return false;
+        out.interfaces[0] = {0, 0, 0, 0, 0x81, static_cast<uint16_t>(maxIn)};
+    }
     return true;
 }
 
@@ -101,6 +167,10 @@ void scan(void (*visit)(void*, uint16_t, const DeviceInfo&, void*), void* user) 
     while (io_service_t service = IOIteratorNext(it)) {
         DeviceInfo di;
         uint64_t id = 0;
+        if (getenv("OGC_IOHID_DIAG")) {
+            logf("ogckit: iohid diag entry");
+            logDiagnostic(service);
+        }
         if (describe(service, di) && IORegistryEntryGetRegistryEntryID(service, &id) == KERN_SUCCESS) {
             // The registry entry ID is stable while the device stays attached and changes on replug.
             visit(reinterpret_cast<void*>(static_cast<uintptr_t>(service)),

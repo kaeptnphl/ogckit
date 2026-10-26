@@ -16,8 +16,15 @@ struct InterfaceInfo {
     uint16_t inMaxPacket;
 };
 
+enum Transport {
+    kTransportUnknown = 0,
+    kTransportUSB,
+    kTransportBluetooth,
+};
+
 struct DeviceInfo {
     uint16_t vid, pid;
+    uint8_t transport;     // Transport enum; USB interface ancestors imply kTransportUSB.
     uint8_t numInterfaces;
     InterfaceInfo interfaces[8];
 };

@@ -13,7 +13,10 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <new>
+#include <string>
+#include <vector>
 
 #include "internal.h"
 #include "report_queue.h"
@@ -32,6 +35,7 @@ struct Handle {
     std::atomic<bool> loggedReportError{false};
     std::atomic<bool> loggedOversized{false};
     uint8_t buffer[ReportQueue::kMaxReport] = {};
+    uint8_t reportBuffer[ReportQueue::kMaxReport] = {};
 };
 
 bool intProperty(io_service_t service, CFStringRef key, bool searchParents, int& out) {
@@ -47,6 +51,25 @@ bool intProperty(io_service_t service, CFStringRef key, bool searchParents, int&
     return ok;
 }
 
+bool stringProperty(io_service_t service, CFStringRef key, bool searchParents, std::string& out) {
+    CFTypeRef v = searchParents
+        ? IORegistryEntrySearchCFProperty(service, kIOServicePlane, key, kCFAllocatorDefault,
+                                          kIORegistryIterateRecursively | kIORegistryIterateParents)
+        : IORegistryEntryCreateCFProperty(service, key, kCFAllocatorDefault, 0);
+    if (!v)
+        return false;
+    const bool ok = CFGetTypeID(v) == CFStringGetTypeID();
+    if (ok) {
+        CFIndex len = CFStringGetLength(static_cast<CFStringRef>(v));
+        CFIndex maxSize = CFStringGetMaximumSizeForEncoding(len, kCFStringEncodingUTF8) + 1;
+        std::vector<char> buf(maxSize);
+        CFStringGetCString(static_cast<CFStringRef>(v), buf.data(), maxSize, kCFStringEncodingUTF8);
+        out = buf.data();
+    }
+    CFRelease(v);
+    return ok;
+}
+
 void setInt(CFMutableDictionaryRef dict, CFStringRef key, int value) {
     CFNumberRef n = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &value);
     if (n) {
@@ -55,26 +78,47 @@ void setInt(CFMutableDictionaryRef dict, CFStringRef key, int value) {
     }
 }
 
-// Only HID devices backed by a USB interface are described; the interface triple comes from the
-// nearest IOUSBHostInterface ancestor so the existing drivers keep making the match decision.
+// Describe a HID device including its transport.
+// Devices with USB interface ancestors get kTransportUSB; Bluetooth devices get kTransportBluetooth.
 bool describe(io_service_t service, DeviceInfo& out) {
     int vid = 0, pid = 0, num = 0, cls = 0, sub = 0, proto = 0, maxIn = 0;
     if (!intProperty(service, CFSTR(kIOHIDVendorIDKey), false, vid) ||
         !intProperty(service, CFSTR(kIOHIDProductIDKey), false, pid))
         return false;
-    if (!intProperty(service, CFSTR("bInterfaceClass"), true, cls) ||
-        !intProperty(service, CFSTR("bInterfaceSubClass"), true, sub) ||
-        !intProperty(service, CFSTR("bInterfaceProtocol"), true, proto) ||
-        !intProperty(service, CFSTR("bInterfaceNumber"), true, num))
-        return false;
+
+    // Try to get USB interface properties from ancestors.
+    bool hasUsbInterface = intProperty(service, CFSTR("bInterfaceClass"), true, cls) &&
+                           intProperty(service, CFSTR("bInterfaceSubClass"), true, sub) &&
+                           intProperty(service, CFSTR("bInterfaceProtocol"), true, proto) &&
+                           intProperty(service, CFSTR("bInterfaceNumber"), true, num);
+
+    // Get the device's transport (USB, Bluetooth, etc.)
+    std::string transportStr;
+    uint8_t transport = kTransportUnknown;
+    if (stringProperty(service, CFSTR(kIOHIDTransportKey), false, transportStr)) {
+        if (transportStr == "Bluetooth" || transportStr == "BluetoothLowEnergy")
+            transport = kTransportBluetooth;
+        else if (transportStr == "USB")
+            transport = kTransportUSB;
+    }
+
+    // Get max input report size
     intProperty(service, CFSTR(kIOHIDMaxInputReportSizeKey), false, maxIn);
+
     out = {};
     out.vid = static_cast<uint16_t>(vid);
     out.pid = static_cast<uint16_t>(pid);
+    out.transport = transport;
     out.numInterfaces = 1;
-    out.interfaces[0] = {static_cast<uint8_t>(num), static_cast<uint8_t>(cls),
-                         static_cast<uint8_t>(sub), static_cast<uint8_t>(proto),
-                         kSyntheticInEndpoint, static_cast<uint16_t>(maxIn)};
+
+    if (hasUsbInterface) {
+        out.interfaces[0] = {static_cast<uint8_t>(num), static_cast<uint8_t>(cls),
+                             static_cast<uint8_t>(sub), static_cast<uint8_t>(proto),
+                             kSyntheticInEndpoint, static_cast<uint16_t>(maxIn)};
+    } else {
+        // No USB interface ancestor (e.g., Bluetooth HID device without USB mapping)
+        out.interfaces[0] = {0, 0, 0, 0, kSyntheticInEndpoint, static_cast<uint16_t>(maxIn)};
+    }
     return true;
 }
 
@@ -111,21 +155,30 @@ void scan(void (*visit)(void*, uint16_t, const DeviceInfo&, void*), void* user) 
     IOObjectRelease(it);
 }
 
-void onReport(void* context, IOReturn result, void*, IOHIDReportType, uint32_t, uint8_t* report,
-              CFIndex length) {
+void onReport(void* context, IOReturn result, void*, IOHIDReportType, uint32_t reportID,
+              uint8_t* report, CFIndex length) {
     auto* h = static_cast<Handle*>(context);
     if (result != kIOReturnSuccess) {
         if (!h->loggedReportError.exchange(true))
             logf("ogckit: iohid input report failed: 0x%08X", result);
         return;
     }
-    if (length > ReportQueue::kMaxReport) {
+    const bool hasReportId = reportID > 0;
+    if (length <= 0 || length + static_cast<CFIndex>(hasReportId) > ReportQueue::kMaxReport) {
         if (!h->loggedOversized.exchange(true))
             logf("ogckit: iohid dropped %ld-byte input report (limit %d)", static_cast<long>(length),
                  ReportQueue::kMaxReport);
         return;
     }
-    h->reports.push(report, static_cast<int>(length));
+    // IOHID supplies the report ID separately. Keep it in-band for the parser without
+    // modifying the callback buffer, which aliases h->buffer.
+    if (hasReportId) {
+        h->reportBuffer[0] = static_cast<uint8_t>(reportID);
+        std::memcpy(h->reportBuffer + 1, report, static_cast<size_t>(length));
+        h->reports.push(h->reportBuffer, static_cast<int>(length + 1));
+    } else {
+        h->reports.push(report, static_cast<int>(length));
+    }
 }
 
 void onRemoved(void* context, IOReturn, void*) {

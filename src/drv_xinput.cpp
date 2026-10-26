@@ -2,6 +2,9 @@
 // endpoint with 20-byte reports. Layout as measured on an 8BitDo GBros. in XInput mode on PS4:
 //   0: 0x00 (input report)  1: 0x14 (length)  2: d-pad, Start, Back, L3, R3  3: LB, RB, Guide, A B X Y
 //   4: LT  5: RT  6..13: LX LY RX RY (int16 little endian, up positive)
+//
+// For Bluetooth HID devices, the report may be prefixed with a report ID byte. The parser accepts
+// both formats: with or without the leading report ID.
 #include "internal.h"
 
 namespace ogc {
@@ -20,7 +23,16 @@ static int16_t s16(const uint8_t* p) {
 }
 
 bool xinputParse(const uint8_t* d, int len, ogc_state& s) {
-    if (len < 14 || d[0] != 0x00 || d[1] < 14 || d[1] > len)
+    // Handle report ID prefix if present (Bluetooth HID devices)
+    // The report ID is prepended by the IOHID backend when reportID > 0
+    const uint8_t* data = d;
+    if (len > 14 && d[0] != 0x00) {
+        // First byte is report ID, skip it
+        data = d + 1;
+        len--;
+    }
+    // Expect: data[0] == 0x00 (report type), data[1] == length (>= 14)
+    if (len < 14 || data[0] != 0x00 || data[1] < 14 || data[1] > len)
         return false;
     struct Bit {
         int byte;
@@ -39,15 +51,15 @@ bool xinputParse(const uint8_t* d, int len, ogc_state& s) {
     };
     uint32_t buttons = 0;
     for (const Bit& b : kBits)
-        if (d[b.byte] & b.mask)
+        if (data[b.byte] & b.mask)
             buttons |= b.button;
     s.buttons = buttons;
-    s.lt = d[4];
-    s.rt = d[5];
-    s.lx = s16(d + 6);
-    s.ly = s16(d + 8);
-    s.rx = s16(d + 10);
-    s.ry = s16(d + 12);
+    s.lt = data[4];
+    s.rt = data[5];
+    s.lx = s16(data + 6);
+    s.ly = s16(data + 8);
+    s.rx = s16(data + 10);
+    s.ry = s16(data + 12);
     return true;
 }
 

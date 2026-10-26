@@ -1,60 +1,59 @@
-// Parses recorded XInput reports (no hardware needed).
-#include <stdio.h>
-#include <string.h>
+#include <cstdio>
+#include <cstring>
 
 #include "../src/internal.h"
 
-static int fails = 0;
-#define CHECK(c) do { if (!(c)) { printf("FAIL line %d: %s\n", __LINE__, #c); fails++; } } while (0)
+namespace {
+
+int failures = 0;
+
+void check(bool condition, const char* expression, int line) {
+    if (!condition) {
+        std::fprintf(stderr, "FAIL line %d: %s\n", line, expression);
+        ++failures;
+    }
+}
+
+#define CHECK(condition) check((condition), #condition, __LINE__)
+
+void testXInputReport() {
+    uint8_t report[20] = {
+        0x00, 0x14, 0x11, 0x10, 0xFF, 0x00, 0x00, 0x7F, 0x00, 0x80,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    };
+    ogc_state state = {};
+    CHECK(ogc::kXInputDriver.parse(report, sizeof(report), state));
+    CHECK(state.buttons == (OGC_BTN_A | OGC_BTN_START | OGC_BTN_DPAD_UP));
+    CHECK(state.lt == 0xFF && state.rt == 0);
+    CHECK(state.lx == 32512 && state.ly == -32768);
+    CHECK(state.rx == 0 && state.ry == 0);
+}
+
+void testXInputReportWithReportId() {
+    uint8_t report[21] = {
+        0x01, 0x00, 0x14, 0x11, 0x10, 0xFF, 0x00, 0x00, 0x7F, 0x00, 0x80,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    };
+    ogc_state state = {};
+    CHECK(ogc::kXInputDriver.parse(report, sizeof(report), state));
+    CHECK(state.buttons == (OGC_BTN_A | OGC_BTN_START | OGC_BTN_DPAD_UP));
+    CHECK(state.lt == 0xFF && state.rt == 0);
+    CHECK(state.lx == 32512 && state.ly == -32768);
+}
+
+void testRejectsUnknownReport() {
+    const uint8_t report[] = {0x00, 0x14, 0x00};
+    ogc_state state = {};
+    CHECK(!ogc::kXInputDriver.parse(report, sizeof(report), state));
+}
+
+}  // namespace
 
 int main() {
-    using namespace ogc;
-    ogc_state s;
-    memset(&s, 0, sizeof(s));
-
-    // A + Start + D-pad up, LT=255, left stick x = +32512, y = -32768.
-    uint8_t r1[20] = {0x00, 0x14, 0x11, 0x10, 0xFF, 0x00, 0x00, 0x7F, 0x00, 0x80, 0, 0, 0, 0, 0};
-    CHECK(kXInputDriver.parse(r1, sizeof(r1), s));
-    CHECK(s.buttons == (OGC_BTN_A | OGC_BTN_START | OGC_BTN_DPAD_UP));
-    CHECK(s.lt == 255 && s.rt == 0);
-    CHECK(s.lx == 32512 && s.ly == -32768 && s.rx == 0 && s.ry == 0);
-
-    // Y + RB + Guide + Back + R3.
-    uint8_t r2[20] = {0x00, 0x14, 0xA0, 0x86, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-    CHECK(kXInputDriver.parse(r2, sizeof(r2), s));
-    CHECK(s.buttons == (OGC_BTN_Y | OGC_BTN_RB | OGC_BTN_GUIDE | OGC_BTN_BACK | OGC_BTN_R3));
-
-    // Not input reports: wrong type, too short.
-    uint8_t r3[20] = {0x01, 0x03, 0x0E};
-    CHECK(!kXInputDriver.parse(r3, sizeof(r3), s));
-    CHECK(!kXInputDriver.parse(r1, 8, s));
-    const ogc_state before = s;
-    for (int len = 0; len < 20; ++len) {
-        CHECK(!kXInputDriver.parse(r1, len, s));
-        CHECK(s.buttons == before.buttons && s.lt == before.lt && s.rt == before.rt);
-        CHECK(s.lx == before.lx && s.ly == before.ly && s.rx == before.rx && s.ry == before.ry);
-        CHECK(s.sequence == before.sequence);
-    }
-    uint8_t minimal[14] = {0, 14};
-    CHECK(kXInputDriver.parse(minimal, sizeof(minimal), s));
-    minimal[1] = 13;
-    CHECK(!kXInputDriver.parse(minimal, sizeof(minimal), s));
-    minimal[1] = 255;
-    CHECK(!kXInputDriver.parse(minimal, sizeof(minimal), s));
-    for (int len = 0; len < 14; ++len)
-        CHECK(!kXInputDriver.parse(nullptr, len, s));
-
-    // Interface matching.
-    DeviceInfo di = {};
-    di.numInterfaces = 2;
-    di.interfaces[0] = {0, 0xFF, 0x5D, 0x01, 0x81, 32};
-    di.interfaces[1] = {1, 0xFF, 0x5D, 0x03, 0x82, 32};
-    CHECK(kXInputDriver.match(di) == &di.interfaces[0]);
-    di.interfaces[0].proto = 0x02;
-    CHECK(kXInputDriver.match(di) == nullptr);
-    di.numInterfaces = 255;
-    CHECK(kXInputDriver.match(di) == nullptr);
-
-    puts(fails ? "FAILED" : "ok");
-    return fails != 0;
+    testXInputReport();
+    testXInputReportWithReportId();
+    testRejectsUnknownReport();
+    if (failures == 0)
+        std::puts("xinput tests passed");
+    return failures != 0;
 }

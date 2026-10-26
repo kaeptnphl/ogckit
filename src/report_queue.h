@@ -12,7 +12,7 @@ namespace ogc {
 
 class ReportQueue {
 public:
-    static constexpr int kMaxReport = 64;
+    static constexpr int kMaxReport = 512;
     static constexpr int kDepth = 8;
 
     // Producer side (callback thread). Oversized or empty reports are rejected; when full, the

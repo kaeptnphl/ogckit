@@ -1,5 +1,6 @@
 // Hardware-free tests for the asynchronous report hand-off used by the IOHID backend.
 #include <stdio.h>
+#include <string.h>
 
 #include <chrono>
 #include <thread>
@@ -45,6 +46,14 @@ static void testBoundsAndTruncation() {
     CHECK(q.push(big, ReportQueue::kMaxReport));
     uint8_t small[4];
     CHECK(q.pop(small, sizeof small, 0) == 4);
+
+    uint8_t switchReport[362];
+    uint8_t received[sizeof(switchReport)];
+    for (size_t i = 0; i < sizeof(switchReport); ++i)
+        switchReport[i] = static_cast<uint8_t>(i);
+    CHECK(q.push(switchReport, sizeof(switchReport)));
+    CHECK(q.pop(received, sizeof(received), 0) == sizeof(switchReport));
+    CHECK(memcmp(switchReport, received, sizeof(switchReport)) == 0);
 }
 
 static void testOverflowDropsOldest() {

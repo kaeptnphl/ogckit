@@ -1,4 +1,4 @@
-// Internal interfaces: a Driver understands one kind of pad, a Backend reaches USB.
+// Internal interfaces: a Driver understands one kind of pad, a Backend reaches the device.
 #pragma once
 
 #include <stdint.h>
@@ -18,6 +18,7 @@ struct InterfaceInfo {
 
 struct DeviceInfo {
     uint16_t vid, pid;
+    bool bluetooth = false;
     uint8_t numInterfaces;
     InterfaceInfo interfaces[8];
 };
@@ -31,6 +32,9 @@ struct Driver {
 };
 
 extern const Driver kXInputDriver;
+extern const Driver kGbrosBluetoothDriver;
+extern const Driver kSwitchProBluetoothDriver;
+extern const Driver kSwitchProUsbDriver;
 
 struct Backend {
     const char* name;

@@ -7,6 +7,8 @@
 
 namespace ogc {
 
+void logf(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+
 struct InterfaceInfo {
     uint8_t number;
     uint8_t cls, sub, proto;
@@ -42,6 +44,8 @@ struct Backend {
     int (*read)(void* handle, uint8_t endpoint, uint8_t* buf, int len, int timeoutMs);
     void (*close)(void* handle, uint8_t interfaceNumber);
     void (*sleepUs)(unsigned us);
+    // Monotonic milliseconds, independent of wall-clock adjustments.
+    uint64_t (*monotonicMs)();
 };
 
 extern const Backend kBackend;  // defined by exactly one backend_*.cpp per build

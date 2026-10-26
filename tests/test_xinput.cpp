@@ -28,6 +28,21 @@ int main() {
     uint8_t r3[20] = {0x01, 0x03, 0x0E};
     CHECK(!kXInputDriver.parse(r3, sizeof(r3), s));
     CHECK(!kXInputDriver.parse(r1, 8, s));
+    const ogc_state before = s;
+    for (int len = 0; len < 20; ++len) {
+        CHECK(!kXInputDriver.parse(r1, len, s));
+        CHECK(s.buttons == before.buttons && s.lt == before.lt && s.rt == before.rt);
+        CHECK(s.lx == before.lx && s.ly == before.ly && s.rx == before.rx && s.ry == before.ry);
+        CHECK(s.sequence == before.sequence);
+    }
+    uint8_t minimal[14] = {0, 14};
+    CHECK(kXInputDriver.parse(minimal, sizeof(minimal), s));
+    minimal[1] = 13;
+    CHECK(!kXInputDriver.parse(minimal, sizeof(minimal), s));
+    minimal[1] = 255;
+    CHECK(!kXInputDriver.parse(minimal, sizeof(minimal), s));
+    for (int len = 0; len < 14; ++len)
+        CHECK(!kXInputDriver.parse(nullptr, len, s));
 
     // Interface matching.
     DeviceInfo di = {};
@@ -36,6 +51,8 @@ int main() {
     di.interfaces[1] = {1, 0xFF, 0x5D, 0x03, 0x82, 32};
     CHECK(kXInputDriver.match(di) == &di.interfaces[0]);
     di.interfaces[0].proto = 0x02;
+    CHECK(kXInputDriver.match(di) == nullptr);
+    di.numInterfaces = 255;
     CHECK(kXInputDriver.match(di) == nullptr);
 
     puts(fails ? "FAILED" : "ok");

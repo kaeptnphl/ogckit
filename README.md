@@ -5,6 +5,8 @@ Not related to libogc.
 
 **Version: 0.1.0 (tentative).** This is an early proof of concept: the API, supported
 controllers, and backend behavior may change. This is not a stable 1.0 release.
+The [roadmap](ROADMAP.md) separates implemented work from plans and items that remain
+unknown or unverified; it does not promise dates or releases.
 
 - Plain C API (`include/ogckit.h`): `ogc_init()`, `ogc_get(slot, &info, &state)`.
 - Hotplug by rescanning once per second, one reader thread per pad, thread-safe.
@@ -28,13 +30,14 @@ Requires CMake, a C++17 compiler, pkg-config, and libusb 1.0 development files.
     ctest --test-dir build --output-on-failure
     build/ogc-terminal            # prints state changes of a connected pad
 
-For PS4 on Emma, use the OpenOrbis/PacBrew toolchain, for example:
+For a PS4 cross-build, use an installed OpenOrbis/PacBrew toolchain. Replace the
+placeholder below with the toolchain's CMake toolchain-file path:
 
-    cmake -S . -B build-ps4 -DOGC_BACKEND=ps4 -DCMAKE_TOOLCHAIN_FILE=/opt/pacbrew/ps4/openorbis/cmake/ps4.cmake
+    cmake -S . -B build-ps4 -DOGC_BACKEND=ps4 -DCMAKE_TOOLCHAIN_FILE=/path/to/openorbis/cmake/ps4.cmake
     cmake --build build-ps4
 
-The current `ps4` backend cross-build has succeeded with that toolchain, but has not been run on PS4
-hardware; see the PS4 notes below.
+The `ps4` backend has cross-built with OpenOrbis. That does not by itself establish
+OGCKit's runtime compatibility on PS4; see the [PS4 notes](#ps4-notes).
 
 ## macOS IOHID backend
 
@@ -53,10 +56,11 @@ delivered as soon as they arrive. Open failures are logged with the IOReturn cod
 
 Observed on one macOS setup (not a general guarantee): Apple's `XboxGamepad` driver exposes the GBros.
 adapter (045E:028E) as a 20-byte input report without a report ID whose descriptor keeps the raw XInput
-byte layout. A short normal-user run (no `sudo`) found the pad, received about 118 reports per second
-and shut down cleanly twice. The user subsequently verified working input through OGCTester with the
-macOS IOHID backend. This confirms that observed setup, not every device or OS version. Other drivers or
-macOS versions may change the report; the XInput parser ignores reports it does not recognize.
+byte layout. A short normal-user run found the pad, received about 118 reports per second
+and shut down cleanly twice. OGCTester, a separate application, later reported working input with
+the macOS IOHID backend on that setup. This confirms that observed setup, not every device or OS
+version. Other drivers or macOS versions may change the report; the XInput parser ignores reports it
+does not recognize.
 
 ## Runtime and logging
 
@@ -98,14 +102,15 @@ reports whose advertised size exceeds the received data without changing the pri
 For concurrency instrumentation with a supporting compiler, configure a separate build with
 `-DCMAKE_CXX_FLAGS="-fsanitize=thread -g"` and `-DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"`.
 
-## Reported hardware observations (macOS tester)
+## Hardware observations
 
-The user observed working GameCube button/stick updates through an 8BitDo GBros. in XInput mode when
-running the tester with `sudo`. Adapter unplug/replug and attached-controller unplug/replug did not
-crash in those tests. When both GBros. ports were populated, the Wii Extension controller took priority
-and GameCube input was inactive; leave the Wii Extension port **empty** to use the GameCube controller.
-These are observations of that setup, not general guarantees or a requirement to change privileges.
-The corrected sources have not yet been re-tested on that physical setup.
+On one macOS setup, OGCTester reported working GameCube input through an 8BitDo GBros.
+adapter in XInput mode with the IOHID backend. This is a separate application and a
+setup-specific observation, not a general device or OS guarantee.
+
+A separate PS4 application has also been run with a wired GBros. adapter in XInput mode.
+This is evidence for that app and hardware setup only; it does not validate OGCKit's PS4
+runtime or its `sceUsbd` integration. See the [PS4 notes](#ps4-notes).
 
 ## Validation notes
 
@@ -114,10 +119,10 @@ The corrected sources have not yet been re-tested on that physical setup.
 - The PS4 backend cross-build completes with the OpenOrbis toolchain; its static library contains
   FreeBSD-targeted x86-64 objects. The test executables produced by that cross-toolchain are not
   runnable on the Debian host; the tests were separately built and passed with the native compiler.
-- The macOS IOHID backend was built on macOS and user-validated through OGCTester. OGCTester is a
-  separate application; its validation is not a build or test of that app as part of this repository.
+- The macOS IOHID backend was built on macOS; a separate OGCTester application reported working input
+  on one setup. OGCTester is not built or tested as part of this repository.
 - The complete libusb library build was not checked on the Mac because libusb development files are
-  absent there; this is not a blocker for the intended PS4/OpenOrbis build.
+  absent in that environment; this does not affect the separate PS4/OpenOrbis cross-build.
 
 ## PS4 notes
 
@@ -125,14 +130,14 @@ The corrected sources have not yet been re-tested on that physical setup.
   manufacturer supports one controller per adapter. Nunchuk: Z arrives as A, C as B, plus junk frames with all
   axes in a corner that a consumer should drop. Classic Controller triggers arrive as 0/255 only.
 - The existing PS4 compatibility alias still frees the device list with `unref=0`. Under standard
-  libusb ownership rules this retains device references and leaks them across scans. Exact sceUsbd
-  ownership and ABI remain unresolved: the public
+  libusb ownership rules this retains device references and leaks them across scans. Whether that
+  behavior applies to sceUsbd, and the exact sceUsbd ownership and ABI, remain unresolved: the public
   [OpenOrbis header](https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain/blob/master/include/orbis/Usbd.h)
   declares `sceUsbdFreeDeviceList(list)` with one argument, unlike the existing two-argument alias,
   and gives no usable signatures for `sceUsbdRefDevice`/`sceUsbdUnrefDevice`. That declaration is not
   proof of the runtime implementation. The alias and unref policy are deliberately unchanged pending
-  reliable ABI/ownership evidence and PS4 runtime validation. The current changes have not been
-  validated on PS4 hardware. The PS4 backend itself cross-builds with OpenOrbis, as noted above.
+  reliable ABI/ownership evidence and OGCKit PS4 runtime validation. The cross-build succeeds, but
+  OGCKit's full runtime behavior on PS4 remains unverified.
 
 ## License
 

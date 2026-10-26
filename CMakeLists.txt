@@ -23,11 +23,17 @@ if(BUILD_TESTING)
   target_compile_features(test_xinput PRIVATE cxx_std_17)
   add_test(NAME xinput COMMAND test_xinput)
 
+  add_executable(test_switch_pro_usb tests/test_switch_pro_usb.cpp src/drv_switch_pro_usb.cpp)
+  target_include_directories(test_switch_pro_usb PRIVATE include)
+  target_compile_features(test_switch_pro_usb PRIVATE cxx_std_17)
+  add_test(NAME switch_pro_usb COMMAND test_switch_pro_usb)
+
   add_executable(test_core
       tests/test_core.cpp
       tests/backend_test.cpp
       src/core.cpp
-      src/drv_xinput.cpp)
+      src/drv_xinput.cpp
+      src/drv_switch_pro_usb.cpp)
   target_include_directories(test_core PRIVATE include)
   target_compile_features(test_core PRIVATE cxx_std_17)
   target_link_libraries(test_core PRIVATE Threads::Threads)
@@ -43,7 +49,11 @@ endif()
 
 if(OGC_BUILD_LIBRARY)
   if(OGC_BACKEND STREQUAL "libusb" OR OGC_BACKEND STREQUAL "iohid")
-    add_library(ogckit STATIC src/core.cpp src/drv_xinput.cpp src/backend_${OGC_BACKEND}.cpp)
+    add_library(ogckit STATIC
+        src/core.cpp
+        src/drv_xinput.cpp
+        src/drv_switch_pro_usb.cpp
+        src/backend_${OGC_BACKEND}.cpp)
     target_include_directories(ogckit PUBLIC include)
     target_compile_features(ogckit PRIVATE cxx_std_17)
     if(OGC_BACKEND STREQUAL "libusb")
@@ -63,7 +73,11 @@ if(OGC_BUILD_LIBRARY)
   elseif(OGC_BACKEND STREQUAL "ps4")
     set_source_files_properties(src/backend_ps4.cpp PROPERTIES
         COMPILE_OPTIONS "-idirafter;${OPENORBIS}/include/orbis/_types")
-    add_library(ogckit STATIC src/core.cpp src/drv_xinput.cpp src/backend_ps4.cpp)
+    add_library(ogckit STATIC
+        src/core.cpp
+        src/drv_xinput.cpp
+        src/drv_switch_pro_usb.cpp
+        src/backend_ps4.cpp)
     target_include_directories(ogckit PUBLIC include)
     target_compile_features(ogckit PRIVATE cxx_std_17)
     target_link_libraries(ogckit PUBLIC SceSysmodule SceUsbd pthread)

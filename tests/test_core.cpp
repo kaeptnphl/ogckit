@@ -31,6 +31,11 @@ int addPad(uint16_t key = 0x101) {
     return add_device(key, 0x045E, 0x028E, &itf, 1);
 }
 
+int addSwitchProPad(uint16_t key = 0x201) {
+    const ogc::InterfaceInfo itf = {0, 0x03, 0x00, 0x00, 0x81, 64};
+    return add_device(key, 0x057E, 0x2009, &itf, 1);
+}
+
 std::mutex logMutex;
 std::vector<std::string> logs;
 void logger(const char* line) {
@@ -163,6 +168,43 @@ void parserAndReconnect() {
     CHECK(close_count(d) == 2);
 }
 
+void switchProDiscoveryAndInput() {
+    reset();
+    const int d = addSwitchProPad();
+    CHECK(ogc_init() == 0);
+    CHECK(wait_for_scan(1));
+    CHECK(waitUntil([&] {
+        ogc_info info = {};
+        return ogc_get(0, &info, nullptr) && std::strcmp(info.driver, "switch-pro-usb") == 0;
+    }));
+
+    ogc_info info = {};
+    ogc_state state = {};
+    CHECK(ogc_get(0, &info, &state) == 1);
+    CHECK(info.vid == 0x057E && info.pid == 0x2009);
+    CHECK(std::strcmp(info.driver, "switch-pro-usb") == 0);
+    CHECK(state.sequence == 0);
+
+    uint8_t report[64] = {};
+    report[0] = 0x30;
+    report[3] = 0x08;  // A
+    report[4] = 0x82;  // Start
+    report[5] = 0x02;  // D-pad up
+    report[7] = 0x08;
+    report[8] = 0x80;
+    report[10] = 0x08;
+    report[11] = 0x80;
+    set_read_result(d, 64, report, sizeof(report));
+    CHECK(waitUntil([&] { return ogc_get(0, nullptr, &state) && state.sequence == 1; }));
+    CHECK(state.buttons == (OGC_BTN_A | OGC_BTN_START | OGC_BTN_DPAD_UP));
+    CHECK(state.lx == 0 && state.ly == 0 && state.rx == 0 && state.ry == 0);
+    CHECK(state.lt == 0 && state.rt == 0);
+
+    remove_device(d);
+    CHECK(waitUntil([] { return ogc_get(0, nullptr, nullptr) == 0; }));
+    ogc_shutdown();
+}
+
 void transportErrorRecovery() {
     reset();
     const int d = addPad();
@@ -257,6 +299,7 @@ int main(int argc, char** argv) {
         lifecycle();
         snapshotsAndSlots();
         parserAndReconnect();
+        switchProDiscoveryAndInput();
         transportErrorRecovery();
         retryAndRecovery();
         shutdownDuringOpen();

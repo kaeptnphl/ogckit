@@ -21,7 +21,7 @@ struct OpenFailure {
 
 OpenFailure g_openFailures[16];
 
-const Driver* const kDrivers[] = {&kXInputDriver};
+const Driver* const kDrivers[] = {&kXInputDriver, &kSwitchProUsbDriver};
 
 struct Slot {
     bool used = false;

@@ -23,8 +23,20 @@ to devices. Keeping these separate allows controller and platform support to gro
 incrementally without changing how an application reads input.
 
 The current implementation provides a read-only C API, device discovery, and
-input snapshots. Initial protocol support is limited to Xbox 360-class XInput
-reports. Available USB backends are libusb for desktop development, macOS IOHID,
+input snapshots. Protocol support includes Xbox 360-class XInput reports and
+captured Switch Pro-style USB reports from the Miadore N64 receiver in Mode A.
+Live Miadore Mode A discovery and input through macOS IOHID are verified for
+the tested receiver: buttons, both stick axes, and digital Z/ZR trigger states.
+In the receiver's XInput mode, macOS identifies it as `045E:028E` and live
+button and left-stick reports are decoded. Isolated tests also confirmed
+digital Z-to-LT and ZR-to-RT mappings, while C-direction buttons changed button
+bits as expected for the N64 controller; a second analog stick is not expected.
+The IOHID reader
+intermittently drops and rediscovers the pad, with macOS logging USB babble
+errors and resets; short successful runs do not establish stability. Right
+stick axes are not part of this controller's N64 layout. The cause of the
+intermittent loss remains undetermined.
+Available USB backends are libusb for desktop development, macOS IOHID,
 and PS4 `sceUsbd` through OpenOrbis/PacBrew. A backend's availability is not a
 guarantee that every controller works on that platform.
 

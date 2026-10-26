@@ -4,7 +4,8 @@
  * found and dropped again while running (hotplug), each is served by a small driver that turns
  * the device's input reports into one common state. Read-only: nothing is ever sent to a pad.
  *
- * Drivers so far: XInput (Xbox 360 class pads, 8BitDo GBros. in XInput mode, ...).
+ * Drivers so far: Xbox 360-class XInput and Switch Pro USB reports (including the Miadore
+ * receiver in its Mode A setting).
  * Backends (how USB is reached): PS4 (OpenOrbis, sceUsbd) and libusb (PC, for development).
  * Lifecycle calls are serialized; ogc_get() may run concurrently from any thread.
  */

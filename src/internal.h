@@ -31,6 +31,7 @@ struct Driver {
 };
 
 extern const Driver kXInputDriver;
+extern const Driver kSwitchProUsbDriver;
 
 struct Backend {
     const char* name;

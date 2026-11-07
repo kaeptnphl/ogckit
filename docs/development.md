@@ -111,7 +111,8 @@ through macOS IOHID, with the same exact-identity, bounded, exclusive-file and
 read-only behavior. This observes only system-visible USB HID devices; it does
 not capture arbitrary USB interfaces or replace the library's libusb
 interrupt-endpoint path. No USB S-Input device is claimed supported until its
-reports have been observed.
+reports have been observed; the tested Miadore receiver in Mode A is the scoped
+exception described below.
 
 After IOHID opens the selected device, wait for `FIRST_REPORT_RECEIVED` before
 starting input. Enter these commands in order to record boundaries in the
@@ -136,6 +137,22 @@ On one setup, Apple's `XboxGamepad` driver exposed a USB GBros. (`045E:028E`) as
 20-byte report without a report ID, retaining the raw XInput byte layout. A short
 normal-user IOHID run received about 118 reports per second and shut down cleanly
 twice. OGCTester later reported working GameCube input with IOHID on that setup.
+
+The Miadore 2.4 GHz N64 receiver was passively captured in two user-selected
+modes. Its XInput-style mode exposed `045E:028E`, report ID 0, 20-byte reports
+beginning `00 14`, compatible with the existing XInput parser. In Mode A
+(called D-Input by the user), macOS exposed `057E:2009` as a generic
+`Pro Controller` USB HID interface (`03/00/00`), with report ID `0x30` and
+64-byte reports. The reports use packed 12-bit axes: the N64 stick drives the
+first pair and the four C directions drive the second pair. Captured button
+reports mapped A, B, Start, Select, Home, Z, L, R, and ZR to distinct fields;
+D-pad directions are button bits. L/R were digital in the observed sequence.
+These are reports from one receiver and firmware, not certification of other
+revisions, modes, or platforms. The descriptor advertises output report ID
+`0x31`; neither the capture tool nor parser sends or implements output reports.
+The parser is covered by hardware-free tests. Live macOS IOHID discovery and
+input were verified in Mode A, including button changes, both stick pairs, and
+digital Z/ZR trigger states.
 
 On the same Mac, an OS-paired GBros in X-Input mode appeared as Bluetooth
 `IOHIDUserDevice` (`045E:02E0`), Generic Desktop/Game Pad usage, with a 16-byte

@@ -23,10 +23,27 @@ to devices. Keeping these separate allows controller and platform support to gro
 incrementally without changing how an application reads input.
 
 The current implementation provides a read-only C API, device discovery, and
-input snapshots. Initial protocol support is limited to Xbox 360-class XInput
-reports. Available USB backends are libusb for desktop development, macOS IOHID,
-and PS4 `sceUsbd` through OpenOrbis/PacBrew. A backend's availability is not a
-guarantee that every controller works on that platform.
+input snapshots. Protocol support includes Xbox 360-class XInput reports,
+captured Switch-Pro-compatible USB reports from the tested Miadore N64 receiver
+in Mode A, and narrowly scoped Bluetooth HID input for observed GBros X-Input
+and Switch-compatible report layouts. Live Miadore Mode A discovery and input
+through macOS IOHID are verified for the tested receiver: buttons, both stick
+axes, and digital Z/ZR trigger states.
+In the receiver's XInput mode, macOS identifies it as `045E:028E` and live
+button and left-stick reports are decoded. Isolated tests also confirmed
+digital Z-to-LT and ZR-to-RT mappings, while C-direction buttons changed button
+bits as expected for the N64 controller; a second analog stick is not expected.
+For Bluetooth, matching is limited to the observed GBros X-Input identity
+(`045E:02E0`) and Switch-compatible identity (`057E:2009`) and their captured
+report layouts. The same `057E:2009` identity can represent different physical
+adapter modes, so mode is not inferred. The IOHID reader
+intermittently drops and rediscovers the pad, with macOS logging USB babble
+errors and resets; short successful runs do not establish stability. Right
+stick axes are not part of this controller's N64 layout. The cause of the
+intermittent loss remains undetermined.
+Available backends are libusb for desktop development, macOS IOHID for system
+HID devices, and PS4 `sceUsbd` through OpenOrbis/PacBrew. A backend's availability
+is not a guarantee that every controller works on that platform.
 
 The versatile 8BitDo GBros. in XInput mode is a useful initial test platform,
 not the project's purpose or a promise of universal adapter support. Tested paths
@@ -51,9 +68,10 @@ libusb. For PS4 cross-builds, integration, logging, and hardware-free tests, see
 
 ## Current limits and direction
 
-Bluetooth and rumble are not implemented. The long-term direction is broader
-controller-protocol and connection-transport coverage, including Bluetooth, with
-additional support added incrementally—not universal support already delivered.
+Bluetooth input exists only for the scoped macOS devices and report layouts
+above; broader Bluetooth/controller coverage is planned. Rumble, including
+separate motors, is not implemented. Additional support will be added
+incrementally—not universal support already delivered.
 See the [implemented / planned / unknown roadmap](ROADMAP.md).
 
 PS4 has a confirmed, setup-specific button-input path, not broad compatibility or

@@ -176,7 +176,6 @@ void switchProBluetoothCore() {
     CHECK(ogc_init() == 0);
     CHECK(wait_for_scan(1));
     CHECK(waitUntil([&] { return ogc_get(0, nullptr, nullptr) == 1; }));
-
     ogc_info info = {};
     ogc_state state = {};
     CHECK(ogc_get(0, &info, &state) == 1);

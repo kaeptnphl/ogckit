@@ -16,12 +16,17 @@ option(OGC_BUILD_LIBRARY "Build the library and terminal example" ON)
 include(CTest)
 
 # Keep the test-only mock runtime and queue tests free of hardware dependencies.
-if(BUILD_TESTING)
+if(BUILD_TESTING AND NOT OGC_BACKEND STREQUAL "ps4")
   find_package(Threads REQUIRED)
   add_executable(test_xinput tests/test_xinput.cpp src/drv_xinput.cpp)
   target_include_directories(test_xinput PRIVATE include)
   target_compile_features(test_xinput PRIVATE cxx_std_17)
   add_test(NAME xinput COMMAND test_xinput)
+
+  add_executable(test_switch_pro_usb tests/test_switch_pro_usb.cpp src/drv_switch_pro_bluetooth.cpp)
+  target_include_directories(test_switch_pro_usb PRIVATE include)
+  target_compile_features(test_switch_pro_usb PRIVATE cxx_std_17)
+  add_test(NAME switch_pro_usb COMMAND test_switch_pro_usb)
 
   add_executable(test_gbros_bluetooth tests/test_gbros_bluetooth.cpp src/drv_gbros_bluetooth.cpp)
   target_include_directories(test_gbros_bluetooth PRIVATE include)
@@ -57,9 +62,12 @@ endif()
 
 if(OGC_BUILD_LIBRARY)
   if(OGC_BACKEND STREQUAL "libusb" OR OGC_BACKEND STREQUAL "iohid")
-    add_library(ogckit STATIC src/core.cpp src/drv_xinput.cpp src/drv_gbros_bluetooth.cpp
-                              src/drv_switch_pro_bluetooth.cpp
-                              src/backend_${OGC_BACKEND}.cpp)
+    add_library(ogckit STATIC
+        src/core.cpp
+        src/drv_xinput.cpp
+        src/drv_gbros_bluetooth.cpp
+        src/drv_switch_pro_bluetooth.cpp
+        src/backend_${OGC_BACKEND}.cpp)
     target_include_directories(ogckit PUBLIC include)
     target_compile_features(ogckit PRIVATE cxx_std_17)
     if(OGC_BACKEND STREQUAL "libusb")
@@ -85,9 +93,12 @@ if(OGC_BUILD_LIBRARY)
   elseif(OGC_BACKEND STREQUAL "ps4")
     set_source_files_properties(src/backend_ps4.cpp PROPERTIES
         COMPILE_OPTIONS "-idirafter;${OPENORBIS}/include/orbis/_types")
-    add_library(ogckit STATIC src/core.cpp src/drv_xinput.cpp src/drv_gbros_bluetooth.cpp
-                              src/drv_switch_pro_bluetooth.cpp
-                              src/backend_ps4.cpp)
+    add_library(ogckit STATIC
+        src/core.cpp
+        src/drv_xinput.cpp
+        src/drv_gbros_bluetooth.cpp
+        src/drv_switch_pro_bluetooth.cpp
+        src/backend_ps4.cpp)
     target_include_directories(ogckit PUBLIC include)
     target_compile_features(ogckit PRIVATE cxx_std_17)
     target_link_libraries(ogckit PUBLIC SceSysmodule SceUsbd pthread)

@@ -5,9 +5,15 @@
 
 #include "ogckit.h"
 
+#if defined(__GNUC__) || defined(__clang__)
+#define OGC_PRINTF_FORMAT(fmt, args) __attribute__((format(printf, fmt, args)))
+#else
+#define OGC_PRINTF_FORMAT(fmt, args)
+#endif
+
 namespace ogc {
 
-void logf(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+void logf(const char* fmt, ...) OGC_PRINTF_FORMAT(1, 2);
 
 struct InterfaceInfo {
     uint8_t number;
@@ -55,3 +61,5 @@ struct Backend {
 extern const Backend kBackend;  // defined by exactly one backend_*.cpp per build
 
 }  // namespace ogc
+
+#undef OGC_PRINTF_FORMAT

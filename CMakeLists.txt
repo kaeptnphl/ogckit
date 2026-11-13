@@ -23,7 +23,10 @@ if(BUILD_TESTING AND NOT OGC_BACKEND STREQUAL "ps4")
   target_compile_features(test_xinput PRIVATE cxx_std_17)
   add_test(NAME xinput COMMAND test_xinput)
 
-  add_executable(test_switch_pro_usb tests/test_switch_pro_usb.cpp src/drv_switch_pro_bluetooth.cpp)
+  add_executable(test_switch_pro_usb
+      tests/test_switch_pro_usb.cpp
+      src/drv_switch_pro_bluetooth.cpp
+      src/drv_switch_pro_usb.cpp)
   target_include_directories(test_switch_pro_usb PRIVATE include)
   target_compile_features(test_switch_pro_usb PRIVATE cxx_std_17)
   add_test(NAME switch_pro_usb COMMAND test_switch_pro_usb)
@@ -35,7 +38,8 @@ if(BUILD_TESTING AND NOT OGC_BACKEND STREQUAL "ps4")
 
   add_executable(test_switch_pro_bluetooth
       tests/test_switch_pro_bluetooth.cpp
-      src/drv_switch_pro_bluetooth.cpp)
+      src/drv_switch_pro_bluetooth.cpp
+      src/drv_switch_pro_usb.cpp)
   target_include_directories(test_switch_pro_bluetooth PRIVATE include)
   target_compile_features(test_switch_pro_bluetooth PRIVATE cxx_std_17)
   add_test(NAME switch_pro_bluetooth COMMAND test_switch_pro_bluetooth)
@@ -46,7 +50,8 @@ if(BUILD_TESTING AND NOT OGC_BACKEND STREQUAL "ps4")
       src/core.cpp
       src/drv_xinput.cpp
       src/drv_gbros_bluetooth.cpp
-      src/drv_switch_pro_bluetooth.cpp)
+      src/drv_switch_pro_bluetooth.cpp
+      src/drv_switch_pro_usb.cpp)
   target_include_directories(test_core PRIVATE include)
   target_compile_features(test_core PRIVATE cxx_std_17)
   target_link_libraries(test_core PRIVATE Threads::Threads)
@@ -67,6 +72,7 @@ if(OGC_BUILD_LIBRARY)
         src/drv_xinput.cpp
         src/drv_gbros_bluetooth.cpp
         src/drv_switch_pro_bluetooth.cpp
+        src/drv_switch_pro_usb.cpp
         src/backend_${OGC_BACKEND}.cpp)
     target_include_directories(ogckit PUBLIC include)
     target_compile_features(ogckit PRIVATE cxx_std_17)
@@ -98,6 +104,7 @@ if(OGC_BUILD_LIBRARY)
         src/drv_xinput.cpp
         src/drv_gbros_bluetooth.cpp
         src/drv_switch_pro_bluetooth.cpp
+        src/drv_switch_pro_usb.cpp
         src/backend_ps4.cpp)
     target_include_directories(ogckit PUBLIC include)
     target_compile_features(ogckit PRIVATE cxx_std_17)
